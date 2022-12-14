@@ -120,3 +120,49 @@ let show_decl ty_ctr ctrs _iargs =
   let show_fun = gFun ["x"] (fun [x] -> show_body x) in
   gRecord [("show", show_fun)]
           
+let shows_decl ty_ctr ctrs iargs = 
+  msg_debug (str "Deriving ShowS Information:" ++ fnl ());
+  msg_debug (str ("Type constructor is: " ^ ty_ctr_to_string ty_ctr) ++ fnl ());
+  msg_debug (str (str_lst_to_string "\n" (List.map ctr_rep_to_string ctrs)) ++ fnl());
+
+  let isCurrentTyCtr = function 
+    | TyCtr(ty_ctr', _) -> ty_ctr = ty_ctr'
+    | _ -> false
+  in
+  
+  let shows_body x = 
+
+    let branch aux (ctr, ty) = 
+      (ctr, generate_names_from_type "p" ty,
+       fun vs -> match vs with
+                  | [] -> gFun ["s"] (fun [s] -> str_append (gStr (constructor_to_string ctr)) (gVar s)) (* TODO: A function that given a string appends the passed in arg *)
+                  | _ -> 
+                    let coq_expr_for_vars : (coq_expr * coq_expr) list =
+                      (fold_ty_vars (fun _ v ty' -> [((if isCurrentTyCtr ty' then gVar aux else gInject "shows"), gVar v)])
+                                    (fun l1 l2 -> List.append l1 l2) [] ty vs)
+                    in
+                    
+                    gFun ["s"] (* TODO: similar to show, but wrapped in a function. *)
+                              (fun [s] -> str_appends [ (gStr ("(" ^ constructor_to_string ctr ^ " "))
+                                                      ; (List.fold_right 
+                                                          (fun (f, v) acc -> (gApp f [v; (if acc = (gVar s) then (str_append (gStr ")") (gVar s)) else (str_append (gStr " ") acc))]))
+                                                          coq_expr_for_vars
+                                                          (gVar s)
+                                                        ) 
+                                                        (* Fold over above, destruct the pairs and apply to var and acc. 
+                                                           Results in nested application like so:
+                                                           (aux v1 " " ++ (show v2 " " ++ (show v3 (")" ++ s) ) )  where s is the continuation.
+                                                           Spaces are added between printed vars.   
+                                                        *)
+                                                      ]
+                              )
+      )
+    in 
+
+    gRecFunIn "aux" ["x'"] 
+              (fun (aux, [x']) -> gMatch (gVar x') (List.map (branch aux) ctrs))
+              (fun aux -> gApp (gVar aux) [gVar x])
+  in 
+  
+  let shows_fun = gFun ["x"] (fun [x] -> shows_body x) in 
+  gRecord [("shows", shows_fun)]
